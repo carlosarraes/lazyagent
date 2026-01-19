@@ -1,4 +1,6 @@
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +60,30 @@ impl Config {
         }
     }
 
+    pub fn default_path() -> Result<PathBuf> {
+        let config_dir = dirs::config_dir()
+            .context("Failed to determine config directory (XDG_CONFIG_HOME or ~/.config)")?;
+        Ok(config_dir.join("lazyagent").join("config.toml"))
+    }
+
+    pub fn load() -> Result<Self> {
+        let path = Self::default_path()?;
+        Self::load_from(&path)
+    }
+
+    pub fn load_from(path: &PathBuf) -> Result<Self> {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read config file: {}", path.display()))?;
+
+        let config: Config = toml::from_str(&content)
+            .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+
+        config.validate()
+            .map_err(|e| anyhow::anyhow!("Config validation failed: {e}"))?;
+
+        Ok(config)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.projects.is_empty() {
             return Err("At least one project must be configured".to_string());
@@ -108,6 +134,118 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    #[test]
+    fn test_default_path_returns_valid_path() {
+        let path = Config::default_path();
+        assert!(path.is_ok());
+        let path = path.unwrap();
+        assert!(path.to_string_lossy().contains("lazyagent"));
+        assert!(path.to_string_lossy().ends_with("config.toml"));
+    }
+
+    #[test]
+    fn test_load_from_missing_file() {
+        let path = PathBuf::from("/nonexistent/path/config.toml");
+        let result = Config::load_from(&path);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Failed to read config file"));
+    }
+
+    #[test]
+    fn test_load_from_invalid_toml() {
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("invalid_config.toml");
+        let mut file = fs::File::create(&config_path).unwrap();
+        writeln!(file, "invalid toml content [[[").unwrap();
+
+        let result = Config::load_from(&config_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Failed to parse config file"));
+
+        fs::remove_file(&config_path).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_valid_config() {
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("valid_config.toml");
+        let mut file = fs::File::create(&config_path).unwrap();
+        writeln!(
+            file,
+            r#"
+[ui]
+refresh_ms = 300
+
+[agent]
+engine = "claude"
+max_iterations = 5
+auto_pr = false
+draft_pr = true
+
+[[projects]]
+name = "test-project"
+repo_path = "/absolute/path/to/repo"
+tasks_yaml = "/absolute/path/to/tasks.yaml"
+base_branch = "main"
+max_parallel = 2
+"#
+        )
+        .unwrap();
+
+        let result = Config::load_from(&config_path);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.ui.refresh_ms, 300);
+        assert_eq!(config.agent.max_iterations, 5);
+        assert!(!config.agent.auto_pr);
+        assert!(config.agent.draft_pr);
+        assert_eq!(config.projects.len(), 1);
+        assert_eq!(config.projects[0].name, "test-project");
+        assert_eq!(config.projects[0].max_parallel, 2);
+
+        fs::remove_file(&config_path).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_config_with_validation_error() {
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("invalid_validation_config.toml");
+        let mut file = fs::File::create(&config_path).unwrap();
+        writeln!(
+            file,
+            r#"
+[ui]
+refresh_ms = 200
+
+[agent]
+engine = "claude"
+max_iterations = 3
+auto_pr = true
+draft_pr = false
+
+[[projects]]
+name = "test-project"
+repo_path = "relative/path"
+tasks_yaml = "/absolute/path/to/tasks.yaml"
+base_branch = "main"
+max_parallel = 3
+"#
+        )
+        .unwrap();
+
+        let result = Config::load_from(&config_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Config validation failed"));
+        assert!(err.to_string().contains("must be absolute"));
+
+        fs::remove_file(&config_path).unwrap();
+    }
 
     #[test]
     fn test_ui_config_defaults() {
