@@ -49,6 +49,38 @@ pub struct ProjectConfig {
     pub tasks_yaml: PathBuf,
     pub base_branch: String,
     pub max_parallel: u32,
+    #[serde(default)]
+    pub overrides: Option<ProjectOverrides>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectOverrides {
+    pub max_iterations: Option<u32>,
+    pub auto_pr: Option<bool>,
+    pub draft_pr: Option<bool>,
+}
+
+impl ProjectConfig {
+    pub fn effective_max_iterations(&self, global: &AgentConfig) -> u32 {
+        self.overrides
+            .as_ref()
+            .and_then(|o| o.max_iterations)
+            .unwrap_or(global.max_iterations)
+    }
+
+    pub fn effective_auto_pr(&self, global: &AgentConfig) -> bool {
+        self.overrides
+            .as_ref()
+            .and_then(|o| o.auto_pr)
+            .unwrap_or(global.auto_pr)
+    }
+
+    pub fn effective_draft_pr(&self, global: &AgentConfig) -> bool {
+        self.overrides
+            .as_ref()
+            .and_then(|o| o.draft_pr)
+            .unwrap_or(global.draft_pr)
+    }
 }
 
 impl Config {
@@ -107,6 +139,17 @@ impl Config {
                     "Project '{}' max_parallel must be greater than 0",
                     project.name
                 ));
+            }
+
+            if let Some(overrides) = &project.overrides {
+                if let Some(max_iter) = overrides.max_iterations {
+                    if max_iter == 0 {
+                        return Err(format!(
+                            "Project '{}' override max_iterations must be greater than 0",
+                            project.name
+                        ));
+                    }
+                }
             }
         }
 
@@ -289,6 +332,7 @@ max_parallel = 3
             tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
             base_branch: "main".to_string(),
             max_parallel: 3,
+            overrides: None,
         });
         assert!(config.validate().is_ok());
     }
@@ -302,6 +346,7 @@ max_parallel = 3
             tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
             base_branch: "main".to_string(),
             max_parallel: 3,
+            overrides: None,
         });
         assert!(config.validate().is_err());
         assert!(config
@@ -319,6 +364,7 @@ max_parallel = 3
             tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
             base_branch: "main".to_string(),
             max_parallel: 3,
+            overrides: None,
         });
         assert!(config.validate().is_err());
         assert!(config
@@ -336,6 +382,7 @@ max_parallel = 3
             tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
             base_branch: "".to_string(),
             max_parallel: 3,
+            overrides: None,
         });
         assert!(config.validate().is_err());
         assert!(config
@@ -353,6 +400,7 @@ max_parallel = 3
             tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
             base_branch: "main".to_string(),
             max_parallel: 0,
+            overrides: None,
         });
         assert!(config.validate().is_err());
         assert!(config
@@ -371,6 +419,7 @@ max_parallel = 3
             tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
             base_branch: "main".to_string(),
             max_parallel: 3,
+            overrides: None,
         });
         assert!(config.validate().is_err());
         assert!(config
@@ -389,11 +438,130 @@ max_parallel = 3
             tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
             base_branch: "main".to_string(),
             max_parallel: 3,
+            overrides: None,
         });
         assert!(config.validate().is_err());
         assert!(config
             .validate()
             .unwrap_err()
             .contains("max_iterations must be greater than 0"));
+    }
+
+    #[test]
+    fn test_project_overrides_inheritance() {
+        let agent_config = AgentConfig {
+            engine: "claude".to_string(),
+            max_iterations: 3,
+            auto_pr: true,
+            draft_pr: false,
+        };
+
+        let project_no_override = ProjectConfig {
+            name: "test-1".to_string(),
+            repo_path: PathBuf::from("/absolute/path/to/repo"),
+            tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
+            base_branch: "main".to_string(),
+            max_parallel: 3,
+            overrides: None,
+        };
+
+        assert_eq!(project_no_override.effective_max_iterations(&agent_config), 3);
+        assert!(project_no_override.effective_auto_pr(&agent_config));
+        assert!(!project_no_override.effective_draft_pr(&agent_config));
+
+        let project_with_override = ProjectConfig {
+            name: "test-2".to_string(),
+            repo_path: PathBuf::from("/absolute/path/to/repo"),
+            tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
+            base_branch: "main".to_string(),
+            max_parallel: 3,
+            overrides: Some(ProjectOverrides {
+                max_iterations: Some(5),
+                auto_pr: Some(false),
+                draft_pr: None,
+            }),
+        };
+
+        assert_eq!(project_with_override.effective_max_iterations(&agent_config), 5);
+        assert!(!project_with_override.effective_auto_pr(&agent_config));
+        assert!(!project_with_override.effective_draft_pr(&agent_config));
+    }
+
+    #[test]
+    fn test_project_overrides_validation() {
+        let mut config = Config::default();
+        config.projects.push(ProjectConfig {
+            name: "test".to_string(),
+            repo_path: PathBuf::from("/absolute/path/to/repo"),
+            tasks_yaml: PathBuf::from("/absolute/path/to/tasks.yaml"),
+            base_branch: "main".to_string(),
+            max_parallel: 3,
+            overrides: Some(ProjectOverrides {
+                max_iterations: Some(0),
+                auto_pr: None,
+                draft_pr: None,
+            }),
+        });
+
+        assert!(config.validate().is_err());
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("override max_iterations must be greater than 0"));
+    }
+
+    #[test]
+    fn test_load_config_with_overrides() {
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("config_with_overrides.toml");
+        let mut file = fs::File::create(&config_path).unwrap();
+        writeln!(
+            file,
+            r#"
+[ui]
+refresh_ms = 200
+
+[agent]
+engine = "claude"
+max_iterations = 3
+auto_pr = true
+draft_pr = false
+
+[[projects]]
+name = "project-1"
+repo_path = "/absolute/path/to/repo1"
+tasks_yaml = "/absolute/path/to/tasks1.yaml"
+base_branch = "main"
+max_parallel = 3
+
+[[projects]]
+name = "project-2"
+repo_path = "/absolute/path/to/repo2"
+tasks_yaml = "/absolute/path/to/tasks2.yaml"
+base_branch = "develop"
+max_parallel = 2
+
+[projects.overrides]
+max_iterations = 5
+auto_pr = false
+draft_pr = true
+"#
+        )
+        .unwrap();
+
+        let result = Config::load_from(&config_path);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.projects.len(), 2);
+
+        assert!(config.projects[0].overrides.is_none());
+        assert_eq!(config.projects[0].effective_max_iterations(&config.agent), 3);
+
+        assert!(config.projects[1].overrides.is_some());
+        assert_eq!(config.projects[1].effective_max_iterations(&config.agent), 5);
+        assert!(!config.projects[1].effective_auto_pr(&config.agent));
+        assert!(config.projects[1].effective_draft_pr(&config.agent));
+
+        fs::remove_file(&config_path).unwrap();
     }
 }
