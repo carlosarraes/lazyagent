@@ -2,3 +2,8 @@
 tasks.yaml
 
 target/
+
+
+# Added by cargo
+
+/target
