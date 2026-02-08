@@ -10,6 +10,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.message import Message
 
+from claude_agent_sdk import AssistantMessage, TextBlock, query, ClaudeAgentOptions
+
 from .agent.client import AgentRunner
 from .state.models import AppState, Conversation, Status
 from .state.persist import delete_log, load_state, save_state
@@ -167,6 +169,29 @@ class LazyAgentApp(App[None]):
         self._refresh_all()
 
 
+    def on_tree_node_highlighted(self, event: TreePanel.NodeHighlighted) -> None:
+        node = event.node
+        data = node.data or ""
+        if data.startswith("convo:"):
+            convo_id = data.split(":", 1)[1]
+            for i, proj in enumerate(self.state.projects):
+                for j, convo in enumerate(proj.convos):
+                    if convo.id == convo_id:
+                        self.state.selected_proj = i
+                        proj.selected = j
+                        self._refresh_output()
+                        self._refresh_status()
+                        return
+        elif data.startswith("proj:"):
+            proj_path = data.split(":", 1)[1]
+            for i, proj in enumerate(self.state.projects):
+                if proj.path == proj_path:
+                    self.state.selected_proj = i
+                    proj.selected = -1
+                    self._refresh_output()
+                    self._refresh_status()
+                    return
+
     def on_key(self, event) -> None:
         if not (self.focused and self.focused.id == "prompt-input"):
             if event.key == "1":
@@ -179,13 +204,12 @@ class LazyAgentApp(App[None]):
                 return
 
         if self.focused and self.focused.id == "tree-panel":
+            tree = self.query_one(TreePanel)
             if event.key == "j":
-                self.state.move_selection(1)
-                self._refresh_all()
+                tree.action_cursor_down()
                 event.prevent_default()
             elif event.key == "k":
-                self.state.move_selection(-1)
-                self._refresh_all()
+                tree.action_cursor_up()
                 event.prevent_default()
             elif event.key == "enter":
                 self.state.toggle_expand()
@@ -210,7 +234,8 @@ class LazyAgentApp(App[None]):
 
         convo = self.state.selected_conversation()
 
-        if convo is None:
+        is_new = convo is None
+        if is_new:
             convo = self.state.new_conversation(prompt)
             if convo is None:
                 return
@@ -224,6 +249,8 @@ class LazyAgentApp(App[None]):
         save_state(self.state)
 
         self._spawn_agent(convo, prompt)
+        if is_new:
+            self._generate_title(convo)
 
     @work(thread=False)
     async def _spawn_agent(self, convo: Conversation, prompt: str) -> None:
@@ -259,6 +286,27 @@ class LazyAgentApp(App[None]):
                 OutputUpdate(convo_id, f"\x1b[31m[Error] {e}\x1b[0m\n")
             )
             app.post_message(AgentDone(convo_id))
+
+
+    @work(thread=False)
+    async def _generate_title(self, convo: Conversation) -> None:
+        try:
+            options = ClaudeAgentOptions(max_turns=1, model="haiku")
+            title_prompt = (
+                "Summarize this task in 1-3 words as a title. "
+                "No quotes, no explanation, just the title.\n\n"
+                f"{convo.prompt}"
+            )
+            async for message in query(prompt=title_prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            convo.title = block.text.strip()
+                            self._refresh_tree()
+                            save_state(self.state)
+                            return
+        except Exception:
+            pass
 
 
     def on_output_update(self, event: OutputUpdate) -> None:

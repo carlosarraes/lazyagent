@@ -53,6 +53,7 @@ def save_state(state: AppState) -> None:
                     "id": convo.id,
                     "session_id": convo.session_id,
                     "prompt": convo.prompt,
+                    "title": convo.title,
                     "status": convo.status.value,
                     "start_time": convo.start_time.isoformat(),
                 }
@@ -91,6 +92,7 @@ def load_state(current_path: str) -> AppState:
                 id=cd["id"],
                 session_id=cd.get("session_id", ""),
                 prompt=cd["prompt"],
+                title=cd.get("title", ""),
                 output=output,
                 status=status,
                 start_time=datetime.fromisoformat(cd["start_time"]),

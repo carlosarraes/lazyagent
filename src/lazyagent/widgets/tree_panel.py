@@ -13,6 +13,7 @@ class TreePanel(Tree[str]):
     def __init__(self) -> None:
         super().__init__("Projects", id="tree-panel")
         self.show_root = False
+        self.guide_depth = 2
 
     def rebuild(self, state: AppState) -> None:
         """Full rebuild — only call on structural changes (add/remove/expand)."""
@@ -66,9 +67,11 @@ def _build_convo_label(convo: Conversation) -> str:
         "E": "[red]",
     }.get(convo.status.value, "[dim]")
 
+    display = convo.title if convo.title else _truncate(convo.prompt, 20)
+
     return (
-        f"  {status_color}[{convo.status.value}][/] "
-        f"{_truncate(convo.prompt, 20)} "
+        f"{status_color}[{convo.status.value}][/] "
+        f"{display} "
         f"[dim]({convo.elapsed()})[/]"
     )
 

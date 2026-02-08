@@ -19,6 +19,7 @@ class Conversation:
     prompt: str
     status: Status = Status.IDLE
     start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    title: str = ""
     session_id: str = ""
     activity: str = ""
     output: str = ""
