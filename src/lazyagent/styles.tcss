@@ -1,12 +1,12 @@
 Screen {
     layout: grid;
-    grid-size: 2 3;
+    grid-size: 2 2;
     grid-columns: 30 1fr;
-    grid-rows: 1fr 3 3;
+    grid-rows: 1fr 3;
 }
 
 TreePanel {
-    row-span: 3;
+    row-span: 2;
     border: solid $primary;
 }
 
@@ -14,12 +14,11 @@ OutputPanel {
     border: solid $primary;
 }
 
-StatusBar {
-    height: 3;
-    padding: 0 1;
-}
-
 PromptInput {
     height: 3;
     border: solid $primary;
+}
+
+PromptInput.plan-mode {
+    border: solid $warning;
 }
