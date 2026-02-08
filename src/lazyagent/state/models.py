@@ -23,6 +23,7 @@ class Conversation:
     session_id: str = ""
     activity: str = ""
     output: str = ""
+    mode: str = "build"
 
     def is_active(self) -> bool:
         return self.status == Status.RUNNING

@@ -55,6 +55,7 @@ def save_state(state: AppState) -> None:
                     "prompt": convo.prompt,
                     "title": convo.title,
                     "status": convo.status.value,
+                    "mode": convo.mode,
                     "start_time": convo.start_time.isoformat(),
                 }
             )
@@ -96,6 +97,7 @@ def load_state(current_path: str) -> AppState:
                 output=output,
                 status=status,
                 start_time=datetime.fromisoformat(cd["start_time"]),
+                mode=cd.get("mode", "build"),
             )
             proj.convos.append(convo)
         state.projects.append(proj)
