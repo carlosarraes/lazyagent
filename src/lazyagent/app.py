@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import anyio
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -17,8 +18,6 @@ from .widgets.tree_panel import TreePanel
 
 
 class OutputUpdate(Message):
-    """Posted when agent produces new output."""
-
     def __init__(self, convo_id: str, text: str) -> None:
         super().__init__()
         self.convo_id = convo_id
@@ -26,8 +25,6 @@ class OutputUpdate(Message):
 
 
 class ActivityUpdate(Message):
-    """Posted when agent activity changes."""
-
     def __init__(self, convo_id: str, activity: str) -> None:
         super().__init__()
         self.convo_id = convo_id
@@ -35,8 +32,6 @@ class ActivityUpdate(Message):
 
 
 class SessionIdUpdate(Message):
-    """Posted when session ID is received from agent."""
-
     def __init__(self, convo_id: str, session_id: str) -> None:
         super().__init__()
         self.convo_id = convo_id
@@ -44,8 +39,6 @@ class SessionIdUpdate(Message):
 
 
 class AgentDone(Message):
-    """Posted when agent finishes."""
-
     def __init__(self, convo_id: str) -> None:
         super().__init__()
         self.convo_id = convo_id
@@ -60,6 +53,7 @@ class LazyAgentApp(App[None]):
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("q", "quit_if_tree", "Quit", show=False),
         Binding("tab", "switch_focus", "Switch Focus", show=False),
+        Binding("shift+tab", "switch_focus", "Switch Focus", show=False),
         Binding("ctrl+n", "new_conversation", "New Conversation", show=False),
     ]
 
@@ -67,6 +61,7 @@ class LazyAgentApp(App[None]):
         super().__init__()
         self.state: AppState = load_state(os.getcwd())
         self._runners: dict[str, AgentRunner] = {}
+        self._output_mode: int = 1
 
     def compose(self) -> ComposeResult:
         yield TreePanel()
@@ -81,7 +76,7 @@ class LazyAgentApp(App[None]):
 
     def _tick(self) -> None:
         self._refresh_status()
-        self._refresh_tree()
+        self.query_one(TreePanel).update_labels(self.state)
 
     def _refresh_all(self) -> None:
         self._refresh_tree()
@@ -92,6 +87,8 @@ class LazyAgentApp(App[None]):
         self.query_one(TreePanel).rebuild(self.state)
 
     def _refresh_output(self) -> None:
+        if self._output_mode != 1:
+            return
         panel = self.query_one(OutputPanel)
         convo = self.state.selected_conversation()
         if convo is None:
@@ -101,6 +98,44 @@ class LazyAgentApp(App[None]):
 
     def _refresh_status(self) -> None:
         self.query_one(StatusBar).update_status(self.state.selected_conversation())
+
+
+    def _set_output_mode(self, mode: int) -> None:
+        self._output_mode = mode
+        panel = self.query_one(OutputPanel)
+        if mode == 1:
+            panel.border_title = "Output"
+            self._refresh_output()
+        elif mode == 2:
+            panel.border_title = "Git Diff"
+            self._show_git_diff()
+
+    @work(thread=False)
+    async def _show_git_diff(self) -> None:
+        proj = self.state.current_project()
+        cwd = proj.path if proj else os.getcwd()
+        panel = self.query_one(OutputPanel)
+        panel.set_output("")
+
+        try:
+            result_status = await anyio.run_process(
+                ["git", "status", "--short"], cwd=cwd
+            )
+            result_diff = await anyio.run_process(
+                ["git", "diff"], cwd=cwd
+            )
+            output = ""
+            status_text = result_status.stdout.decode()
+            diff_text = result_diff.stdout.decode()
+            if status_text:
+                output += f"\x1b[36m── git status ──\x1b[0m\n{status_text}\n"
+            if diff_text:
+                output += f"\x1b[36m── git diff ──\x1b[0m\n{diff_text}"
+            if not output:
+                output = "No changes"
+            panel.set_output(output)
+        except Exception as e:
+            panel.set_output(f"\x1b[31m[Error] {e}\x1b[0m")
 
 
     def action_quit_if_tree(self) -> None:
@@ -116,7 +151,6 @@ class LazyAgentApp(App[None]):
         else:
             self.state.tree_focused = True
             tree.focus()
-        self._refresh_tree()
 
     def action_new_conversation(self) -> None:
         proj = self.state.current_project()
@@ -128,6 +162,16 @@ class LazyAgentApp(App[None]):
 
 
     def on_key(self, event) -> None:
+        if not (self.focused and self.focused.id == "prompt-input"):
+            if event.key == "1":
+                self._set_output_mode(1)
+                event.prevent_default()
+                return
+            elif event.key == "2":
+                self._set_output_mode(2)
+                event.prevent_default()
+                return
+
         if self.focused and self.focused.id == "tree-panel":
             if event.key == "j":
                 self.state.move_selection(1)
@@ -155,6 +199,8 @@ class LazyAgentApp(App[None]):
             return
 
         self.query_one(PromptInput).value = ""
+        self._output_mode = 1
+        self.query_one(OutputPanel).border_title = "Output"
 
         convo = self.state.selected_conversation()
 
@@ -214,7 +260,7 @@ class LazyAgentApp(App[None]):
         if convo is None:
             return
         convo.output += event.text
-        if self.state.selected_conversation() is convo:
+        if self._output_mode == 1 and self.state.selected_conversation() is convo:
             self.query_one(OutputPanel).append_text(event.text)
 
     def on_activity_update(self, event: ActivityUpdate) -> None:
@@ -244,9 +290,7 @@ class LazyAgentApp(App[None]):
         convo = self.state.selected_conversation()
         if convo is None:
             return
-
-        runner = self._runners.pop(convo.id, None)
-
+        self._runners.pop(convo.id, None)
         delete_log(convo.id)
         self.state.delete_selected_conversation()
         self._refresh_all()
