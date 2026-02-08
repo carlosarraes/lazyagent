@@ -9,6 +9,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.message import Message
+from textual.theme import Theme
 
 from claude_agent_sdk import AssistantMessage, TextBlock, query, ClaudeAgentOptions
 
@@ -61,6 +62,8 @@ class LazyAgentApp(App[None]):
 
     def __init__(self) -> None:
         super().__init__()
+        self.register_theme(_CATPPUCCIN_MOCHA)
+        self.theme = "catppuccin-mocha"
         self.state: AppState = load_state(os.getcwd())
         self._runners: dict[str, AgentRunner] = {}
         self._output_mode: int = 1
@@ -410,3 +413,19 @@ def _output_mode_title(mode: int) -> str:
     if mode == 1:
         return "[bold reverse] Output [/] | Diff"
     return "Output | [bold reverse] Diff [/]"
+
+
+_CATPPUCCIN_MOCHA = Theme(
+    name="catppuccin-mocha",
+    primary="#89b4fa",
+    secondary="#b4befe",
+    accent="#cba6f7",
+    warning="#f9e2af",
+    error="#f38ba8",
+    success="#a6e3a1",
+    foreground="#cdd6f4",
+    background="#1e1e2e",
+    surface="#313244",
+    panel="#181825",
+    dark=True,
+)
