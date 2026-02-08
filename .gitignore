@@ -1,4 +1,14 @@
 .ralphy
 tasks.yaml
 
-target/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+*.egg
+
+# uv
+uv.lock
