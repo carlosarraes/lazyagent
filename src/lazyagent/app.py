@@ -296,10 +296,17 @@ class LazyAgentApp(App[None]):
             options = ClaudeAgentOptions(
                 max_turns=1,
                 model="haiku",
-                system_prompt=(
-                    'Respond with ONLY a JSON object: {"title": "<1-3 word title>"}. '
-                    "No other text."
-                ),
+                system_prompt="Generate a 1-3 word title for the user's task. Be concise.",
+                output_format={
+                    "type": "json_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"}
+                        },
+                        "required": ["title"],
+                    },
+                },
             )
             async for message in query(
                 prompt=f"Summarize: {convo.prompt}", options=options
@@ -308,12 +315,9 @@ class LazyAgentApp(App[None]):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             text = block.text.strip()
-                            start = text.find("{")
-                            end = text.rfind("}") + 1
-                            if start >= 0 and end > start:
-                                data = _json.loads(text[start:end])
-                                convo.title = data["title"]
-                            else:
+                            try:
+                                convo.title = _json.loads(text)["title"]
+                            except (ValueError, KeyError):
                                 convo.title = text.split("\n")[0][:30]
                             self._refresh_tree()
                             save_state(self.state)
