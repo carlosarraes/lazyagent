@@ -1,0 +1,25 @@
+Screen {
+    layout: grid;
+    grid-size: 2 3;
+    grid-columns: 30 1fr;
+    grid-rows: 1fr 3 3;
+}
+
+TreePanel {
+    row-span: 3;
+    border: solid $primary;
+}
+
+OutputPanel {
+    border: solid $primary;
+}
+
+StatusBar {
+    height: 3;
+    padding: 0 1;
+}
+
+PromptInput {
+    height: 3;
+    border: solid $primary;
+}
