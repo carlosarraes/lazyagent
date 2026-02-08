@@ -290,18 +290,31 @@ class LazyAgentApp(App[None]):
 
     @work(thread=False)
     async def _generate_title(self, convo: Conversation) -> None:
+        import json as _json
+
         try:
-            options = ClaudeAgentOptions(max_turns=1, model="haiku")
-            title_prompt = (
-                "Summarize this task in 1-3 words as a title. "
-                "No quotes, no explanation, just the title.\n\n"
-                f"{convo.prompt}"
+            options = ClaudeAgentOptions(
+                max_turns=1,
+                model="haiku",
+                system_prompt=(
+                    'Respond with ONLY a JSON object: {"title": "<1-3 word title>"}. '
+                    "No other text."
+                ),
             )
-            async for message in query(prompt=title_prompt, options=options):
+            async for message in query(
+                prompt=f"Summarize: {convo.prompt}", options=options
+            ):
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
-                            convo.title = block.text.strip()
+                            text = block.text.strip()
+                            start = text.find("{")
+                            end = text.rfind("}") + 1
+                            if start >= 0 and end > start:
+                                data = _json.loads(text[start:end])
+                                convo.title = data["title"]
+                            else:
+                                convo.title = text.split("\n")[0][:30]
                             self._refresh_tree()
                             save_state(self.state)
                             return
