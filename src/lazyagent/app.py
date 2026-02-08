@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 
 import anyio
+from rich.syntax import Syntax
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -70,6 +72,7 @@ class LazyAgentApp(App[None]):
         yield PromptInput()
 
     def on_mount(self) -> None:
+        self.query_one(OutputPanel).border_title = _output_mode_title(1)
         self._refresh_all()
         self.query_one(PromptInput).focus()
         self.set_interval(1.0, self._tick)
@@ -103,11 +106,10 @@ class LazyAgentApp(App[None]):
     def _set_output_mode(self, mode: int) -> None:
         self._output_mode = mode
         panel = self.query_one(OutputPanel)
+        panel.border_title = _output_mode_title(mode)
         if mode == 1:
-            panel.border_title = "Output"
             self._refresh_output()
         elif mode == 2:
-            panel.border_title = "Git Diff"
             self._show_git_diff()
 
     @work(thread=False)
@@ -115,7 +117,7 @@ class LazyAgentApp(App[None]):
         proj = self.state.current_project()
         cwd = proj.path if proj else os.getcwd()
         panel = self.query_one(OutputPanel)
-        panel.set_output("")
+        panel.clear()
 
         try:
             result_status = await anyio.run_process(
@@ -124,18 +126,22 @@ class LazyAgentApp(App[None]):
             result_diff = await anyio.run_process(
                 ["git", "diff"], cwd=cwd
             )
-            output = ""
-            status_text = result_status.stdout.decode()
-            diff_text = result_diff.stdout.decode()
+            status_text = result_status.stdout.decode().rstrip("\n")
+            diff_text = result_diff.stdout.decode().rstrip("\n")
+
+            if not status_text and not diff_text:
+                panel.write(Text("No changes", style="dim"))
+                return
+
             if status_text:
-                output += f"\x1b[36m── git status ──\x1b[0m\n{status_text}\n"
+                panel.write(Text.from_ansi("\x1b[36m── git status ──\x1b[0m"))
+                panel.write(Text(status_text))
+
             if diff_text:
-                output += f"\x1b[36m── git diff ──\x1b[0m\n{diff_text}"
-            if not output:
-                output = "No changes"
-            panel.set_output(output)
+                panel.write(Text.from_ansi("\x1b[36m── git diff ──\x1b[0m"))
+                panel.write(Syntax(diff_text, "diff", theme="monokai", line_numbers=False))
         except Exception as e:
-            panel.set_output(f"\x1b[31m[Error] {e}\x1b[0m")
+            panel.write(Text.from_ansi(f"\x1b[31m[Error] {e}\x1b[0m"))
 
 
     def action_quit_if_tree(self) -> None:
@@ -200,7 +206,7 @@ class LazyAgentApp(App[None]):
 
         self.query_one(PromptInput).value = ""
         self._output_mode = 1
-        self.query_one(OutputPanel).border_title = "Output"
+        self.query_one(OutputPanel).border_title = _output_mode_title(1)
 
         convo = self.state.selected_conversation()
 
@@ -305,3 +311,9 @@ class LazyAgentApp(App[None]):
 
     def _on_exit_app(self) -> None:
         save_state(self.state)
+
+
+def _output_mode_title(mode: int) -> str:
+    if mode == 1:
+        return "[bold reverse] Output [/] | Diff"
+    return "Output | [bold reverse] Diff [/]"
