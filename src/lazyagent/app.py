@@ -17,7 +17,6 @@ from .state.models import AppState, Conversation, Status
 from .state.persist import delete_log, load_state, save_state
 from .widgets.output_panel import OutputPanel
 from .widgets.prompt_input import PromptInput
-from .widgets.status_bar import StatusBar
 from .widgets.tree_panel import TreePanel
 
 
@@ -57,7 +56,6 @@ class LazyAgentApp(App[None]):
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("q", "quit_if_tree", "Quit", show=False),
         Binding("tab", "switch_focus", "Switch Focus", show=False),
-        Binding("shift+tab", "switch_focus", "Switch Focus", show=False),
         Binding("ctrl+n", "new_conversation", "New Conversation", show=False),
     ]
 
@@ -66,11 +64,11 @@ class LazyAgentApp(App[None]):
         self.state: AppState = load_state(os.getcwd())
         self._runners: dict[str, AgentRunner] = {}
         self._output_mode: int = 1
+        self._pending_mode: str = "build"
 
     def compose(self) -> ComposeResult:
         yield TreePanel()
         yield OutputPanel()
-        yield StatusBar()
         yield PromptInput()
 
     def on_mount(self) -> None:
@@ -87,6 +85,7 @@ class LazyAgentApp(App[None]):
         self._refresh_tree()
         self._refresh_output()
         self._refresh_status()
+        self._refresh_prompt_mode()
 
     def _refresh_tree(self) -> None:
         self.query_one(TreePanel).rebuild(self.state)
@@ -102,7 +101,12 @@ class LazyAgentApp(App[None]):
             panel.set_output(convo.output)
 
     def _refresh_status(self) -> None:
-        self.query_one(StatusBar).update_status(self.state.selected_conversation())
+        self.query_one(PromptInput).set_status(self.state.selected_conversation())
+
+    def _refresh_prompt_mode(self) -> None:
+        convo = self.state.selected_conversation()
+        mode = convo.mode if convo else self._pending_mode
+        self.query_one(PromptInput).set_mode(mode)
 
 
     def _set_output_mode(self, mode: int) -> None:
@@ -160,6 +164,17 @@ class LazyAgentApp(App[None]):
             self.state.tree_focused = True
             tree.focus()
 
+    def _toggle_mode(self) -> None:
+        convo = self.state.selected_conversation()
+        if convo is None:
+            new_mode = "plan" if self._pending_mode == "build" else "build"
+            self._pending_mode = new_mode
+        else:
+            convo.mode = "plan" if convo.mode == "build" else "build"
+            new_mode = convo.mode
+            save_state(self.state)
+        self.query_one(PromptInput).set_mode(new_mode)
+
     def action_new_conversation(self) -> None:
         proj = self.state.current_project()
         if proj is not None:
@@ -181,6 +196,7 @@ class LazyAgentApp(App[None]):
                         proj.selected = j
                         self._refresh_output()
                         self._refresh_status()
+                        self._refresh_prompt_mode()
                         return
         elif data.startswith("proj:"):
             proj_path = data.split(":", 1)[1]
@@ -190,9 +206,18 @@ class LazyAgentApp(App[None]):
                     proj.selected = -1
                     self._refresh_output()
                     self._refresh_status()
+                    self._refresh_prompt_mode()
                     return
 
     def on_key(self, event) -> None:
+        if event.key == "shift+tab":
+            if self.focused and self.focused.id == "prompt-input":
+                self._toggle_mode()
+            else:
+                self.action_switch_focus()
+            event.prevent_default()
+            return
+
         if not (self.focused and self.focused.id == "prompt-input"):
             if event.key == "1":
                 self._set_output_mode(1)
@@ -239,6 +264,7 @@ class LazyAgentApp(App[None]):
             convo = self.state.new_conversation(prompt)
             if convo is None:
                 return
+            convo.mode = self._pending_mode
             convo.output = f"\x1b[36m▶ {prompt}\x1b[0m\n"
         else:
             convo.output += f"\n\x1b[36m▶ {prompt}\x1b[0m\n"
@@ -269,9 +295,11 @@ class LazyAgentApp(App[None]):
         def on_done() -> None:
             app.post_message(AgentDone(convo_id))
 
+        permission_mode = "plan" if convo.mode == "plan" else "bypassPermissions"
         runner = AgentRunner(
             cwd=self.state.current_project().path if self.state.current_project() else os.getcwd(),
             session_id=convo.session_id,
+            permission_mode=permission_mode,
             on_output=on_output,
             on_activity=on_activity,
             on_session_id=on_session_id,
