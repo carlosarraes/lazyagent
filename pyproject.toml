@@ -1,0 +1,20 @@
+[project]
+name = "lazyagent"
+version = "0.1.0"
+description = "TUI for orchestrating AI coding agents"
+readme = "README.md"
+authors = [
+    { name = "carraes", email = "carraeshb@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk>=0.1.30",
+    "textual>=3.0.0",
+]
+
+[project.scripts]
+lazyagent = "lazyagent.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"
