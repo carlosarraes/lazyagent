@@ -23,6 +23,7 @@ class AgentRunner:
         self,
         cwd: str,
         session_id: str = "",
+        permission_mode: str = "bypassPermissions",
         on_output: Callable[[str], None] | None = None,
         on_activity: Callable[[str], None] | None = None,
         on_session_id: Callable[[str], None] | None = None,
@@ -30,6 +31,7 @@ class AgentRunner:
     ) -> None:
         self.cwd = cwd
         self.session_id = session_id
+        self.permission_mode = permission_mode
         self._on_output = on_output
         self._on_activity = on_activity
         self._on_session_id = on_session_id
@@ -60,7 +62,7 @@ class AgentRunner:
     async def run(self, prompt: str) -> None:
         options = ClaudeAgentOptions(
             cwd=self.cwd,
-            permission_mode="bypassPermissions",
+            permission_mode=self.permission_mode,
             hooks={
                 "PreToolUse": [
                     HookMatcher(matcher="", hooks=[self._pre_tool_hook]),
